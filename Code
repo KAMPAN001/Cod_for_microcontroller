@@ -1,0 +1,305 @@
+//Zaimplementowane biblioteki do programu
+#include "iodefine.h"
+#include "lcd.h"
+#include "inline.h"
+
+//definicje
+#define klawiatura_Obszar 0x20000
+#define klawiatura_bufor (*(volatile unsigned char*)(klawiatura_Obszar+1))
+
+//zmienne
+short count;
+short licznik = 0;
+short liczba1 = 0;
+short liczba2 = 0;
+short wypelnienie_zakres = 1; 
+short liczba;
+short wynik;
+char stan_pracy = 0;
+char pomoc = 1;
+short min;
+short max;
+short zakres;
+
+
+//napisy
+unsigned char napis1[] = "KENER-PUE";
+unsigned char napis2[] = "Twoja liczba:";
+unsigned char napis3[] = "ZADANIE_NR_7    ";
+unsigned char START[] = "START";
+unsigned char STOP[] = "STOP";
+unsigned char f[] = "f=";
+
+//deklaracje funkcji
+void Ekran_startowy(void);
+void puts(unsigned char *str);
+void bin2bcd(short liczba);
+void init_ITU2(void);
+void init_ITU3(void);
+void odczytaj_klawiature(void);
+void czysc(void);
+short pomiar_z_ac();
+short skalowanie();
+short obliczanie(wypelnienie_zakres);
+
+
+
+
+
+//------------ wlasciwy program -----------------------------------
+
+//Funkcja main, zawiera wywołania funkcji oraz główną pętle while
+int main (void)
+{
+	//Elementy wywoływane tylko raz 
+	AD.ADCSR.BYTE = 0x32;
+	IniLCD();
+	Ekran_startowy();
+	init_ITU2();      
+	init_ITU3();               
+	
+	//petla glowna
+	while(1)					     
+	{
+		if (ITU2.TSR.BIT.IMFA == 1)    //sprawdza flage czy doliczył do GRA
+		{
+			ITU2.TSR.BIT.IMFA = 0;	   //skasowanie flage czy doliczył do GRA
+			licznik++;
+			
+			if(licznik%100==0)          //minelo 100ms
+			{
+				odczytaj_klawiature();	//odczytanie danych z klawiatury
+			}
+			
+			
+			if(licznik%500==0)          //minelo 500ms
+			{
+				if (stan_pracy == 1)    //elementy wywoływane w momencie stanu racy jako "1"
+				{
+					GotoXY(1,1);
+					puts(START);
+					GotoXY(2,1);
+					puts("zakres");
+					putchar(wypelnienie_zakres + 0x30);
+	 				puts("  f=");
+					bin2bcd(skalowanie());
+					puts("%");
+					
+					zakres = obliczanie(wypelnienie_zakres);
+					if (zakres == min)
+					{
+						GotoXY(1,10);
+						puts("min");
+					}
+					else if (zakres == max)
+					{
+						GotoXY(1,10);
+						puts("max");
+					}
+					else 
+					{
+						GotoXY(1,10);
+						puts("   ");
+					}
+						
+				}
+					
+				else if (stan_pracy == 0)	//elementy wywoływane w momencie stanu racy jako "2"
+				{	
+					Ekran_startowy();
+						
+				}
+			}
+		}	
+	}
+}
+
+
+//------- funkcje ----------
+
+//Funkcja wyświetlająca ekran startowy 
+void Ekran_startowy(void)                     ////
+{ 
+	GotoXY(2,1);
+	puts(napis3);
+	GotoXY(1,1);
+	puts(STOP);
+	
+}
+
+//Funkcja wyświetlająca napis
+void puts(unsigned char *str)                 ////
+{	
+	while(*str!='\0')
+	{
+		putchar(*str++);
+		
+	}
+}
+
+//Funkcja wyświtlająca liczbę
+void bin2bcd(short liczba)                    ////
+{
+	short liczba1 = liczba/100;
+	short liczba2 = (liczba - (liczba1*100)) / 10;
+	short liczba3 = liczba - ((liczba1*100) + (liczba2*10));
+	short wyswietl;
+	
+
+		wyswietl = liczba1 + 0x30;
+		putchar(wyswietl);
+
+		//wyswietl = ',';
+		//putchar(wyswietl);
+		
+		wyswietl = liczba2 + 0x30;
+		putchar(wyswietl);
+		
+		wyswietl = liczba3 + 0x30;
+		putchar(wyswietl);
+}
+
+
+//Inicjalizacja ITU2
+void init_ITU2(void)                       ////
+{
+	
+	ITU.TSTR.BIT.STR2 = 0;
+	ITU2.TCR.BYTE = 0xA0;
+	ITU2.TIOR.BYTE = 0x88;
+	ITU2.TIER.BYTE = 0xF8;
+	ITU2.GRA = 15999;
+	ITU.TSTR.BIT.STR2 = 1;
+}
+
+
+//Inicializacja ITU3
+void init_ITU3(void)                       ////
+{
+	ITU.TSTR.BIT.STR3 = 0;
+	//ITU3.TCNT = 0;
+	//ITU3.TIOR.BYTE = 0x8B;
+	//ITU3.TCR.BYTE = 0xA3;
+	//ITU3.GRA = 3199;
+	//ITU3.GRB = 319;
+	//ITU3.TSR.BYTE = 0xFF;
+	//ITU3.TIER.BYTE = 0xF8;
+	//ITU.TMDR.BIT.PWM3 =1 ;
+	PA.DDR = 0xff;
+	ITU3.TCR.BYTE = 0xa3;
+	ITU3.TIOR.BYTE = 0x8b;
+	ITU3.TCNT = 0;
+	ITU3.GRA = 100;
+	ITU3.TIER.BYTE = 0xf8;
+	ITU.TSTR.BIT.STR3 = 1;
+	
+}
+
+//Funkcja odpowidzalna za odczyt danych z klawiatury
+void odczytaj_klawiature(void)                              ////
+{
+ 	char temp;
+	temp = klawiatura_bufor&0x7f ;
+	
+	if (temp == 0x7b)
+	{
+		stan_pracy = 1;
+		ITU.TSTR.BIT.STR3 = 1;
+		
+	}
+	else if (temp == 0x77)
+	{
+	 	stan_pracy = 0;	
+		ITU.TSTR.BIT.STR3 = 0;
+		ITU3.GRB = ITU3.GRA;
+	}
+	
+	
+	if(temp == 0x7e && wypelnienie_zakres <  3 && stan_pracy == 1 )
+	{
+	 	 
+		wypelnienie_zakres = wypelnienie_zakres +1;
+	}
+	else if (temp == 0x7d && wypelnienie_zakres >  1 && stan_pracy == 1 )
+	{
+	
+	 	wypelnienie_zakres = wypelnienie_zakres -1; 
+	}
+	
+	
+}
+
+//Funkcja odpowidzalna za odcztywanie danych z przetwornika analogowo cyfrowego
+short pomiar_z_ac()
+{
+	short wynik ;
+	
+	if ( AD.ADCSR.BIT.ADF == 1)
+	{
+	AD.ADCSR.BIT.ADF = 0;
+	wynik = AD.ADDRC>>6;
+	}
+	
+	return wynik;
+	
+}
+
+
+
+//void czysc()
+//{
+//	unsigned char czy[] = "                ";
+//	GotoXY(1,1);
+//	puts(czy);
+//	GotoXY(2,1);
+//	puts(czy);
+//}
+
+
+
+//Skalowanie wartości z pokrętła w skali od 0 do 100%
+short skalowanie(wypelnienie_zakres)
+{
+ short procent = pomiar_z_ac()/10;
+ 
+ if (procent >100)
+ {
+	 procent = 100;
+ }
+ return(procent);
+}
+
+
+
+//Obliczanie wypełniena na podstawie zakresu
+short obliczanie(wypelnienie_zakres)
+{
+ short pomiar = pomiar_z_ac();
+
+ 
+ if (wypelnienie_zakres == 1)
+ {
+	 min = 50;
+	 max = 100;	
+	 pomiar = min + (pomiar_z_ac()/20.4);
+ }
+ else if (wypelnienie_zakres == 2)
+ {
+	 min = 100;
+	 max = 200;	
+	 pomiar = min + (pomiar_z_ac()/10.2);
+ }
+ else if (wypelnienie_zakres == 3)
+ {
+	 min = 200;
+	 max = 400;	
+	 pomiar = min + (pomiar_z_ac()/5.1);
+ }
+
+ 	 //przeliczanie częstotliwosci	 
+ 	 ITU3.GRA = 1000000/pomiar;
+	 
+ 
+ return(pomiar);
+ 
+}
